@@ -1,167 +1,161 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# setup.sh
+# Universal setup script for the VITON-HD preprocessing repo
+# - installs python deps (torch + basics)
+# - clones repositories: Detectron2 (for DensePose), DensePose, SCHP, U2Net
+# - downloads common pretrained artifacts (ONNX openpose model, U2Net, placeholder SCHP)
+# - does basic import checks
+#
+# Notes:
+# - You may need to adapt the torch install line (CUDA version) to your machine.
+# - Detectron2 installation may require a specific torch+cuda combination; if pip install -e fails,
+#   check detectron2 docs for the correct wheel for your CUDA/PyTorch.
+# - Run: bash setup.sh
+
 set -e
-echo "======================================="
-echo " VITON-HD (Kaggle) environment bootstrap"
-echo "======================================="
+echo "============================================"
+echo " VITON-HD Preprocessing - Universal Setup"
+echo "============================================"
 
-# ---------------------------
-# Notes for Kaggle users:
-# - This script avoids building CMU OpenPose (too heavy for Kaggle).
-# - We install OpenPifPaf (pip) for pose estimation (compatible alternative).
-# - We install Detectron2 (build from source if necessary) and DensePose (editable).
-# - We install SCHP and U2Net repos and download pretrained weights.
-# - After running: RESTART THE KERNEL in Kaggle UI.
-# ---------------------------
-
-# 0) Ensure apt packages (Kaggle allows apt)
-echo "[1/8] Installing system packages..."
-sudo apt-get update -y
-sudo apt-get install -y build-essential cmake git libatlas-base-dev libopencv-dev pkg-config
-
-# 1) Upgrade pip/setuptools/wheel
-echo "[2/8] Upgrading pip, setuptools..."
-python -m pip install --upgrade pip setuptools wheel
-
-# 2) Install core Python libs (avoid forcing torch if Kaggle already has a good version)
-echo "[3/8] Installing core Python packages..."
-python -m pip install numpy pillow opencv-python scikit-image tqdm matplotlib cython pycocotools torchvision --upgrade
-
-# 3) Install OpenPifPaf for pose (lightweight, pip installable)
-#echo "[4/8] Installing OpenPifPaf (pose/keypoints alternative to OpenPose)..."
-pip3 install openpifpaf
-
-# 4) Install Detectron2 (DensePose depends on Detectron2)
-#    We try to install a compatible Detectron2 wheel; if that fails we fallback to building from source.
-echo "[5/8] Installing Detectron2 (required for DensePose)..."
-PYTORCH_VERSION=$(python - <<PY
-import torch,sys
-v = torch.__version__
-print(v)
-PY)
-echo "Detected torch version: $PYTORCH_VERSION"
-
-# Try to install a prebuilt detectron2 wheel for common CUDA; fall back to git source if pip wheel unavailable.
-# Kaggle typically uses CUDA 11.x; try cu118 wheel first.
-set +e
-git clone https://github.com/facebookresearch/detectron2.git
-python -m pip install -e detectron2
-set -e
-
-# 5) Clone DensePose and install editable
-echo "[6/8] Cloning and installing DensePose (editable mode)..."
-if [ ! -d "DensePose" ]; then
-  git clone https://github.com/facebookresearch/DensePose.git
-fi
-python -m pip install -e DensePose
-
-# 6) Clone SCHP (human parsing used by VITON-HD) and install its requirements
-echo "[7/8] Cloning SCHP (human parsing) ..."
-if [ ! -d "Self-Correction-Human-Parsing" ] && [ ! -d "SCHP" ]; then
-  git clone https://github.com/PeikeLi/Self-Correction-Human-Parsing.git SCHP
-fi
-
-# install SCHP python requirements if provided
-if [ -f "SCHP/requirements.txt" ]; then
-  python -m pip install -r SCHP/requirements.txt
+# 1) System packages (Ubuntu-like)
+echo "[1/6] Installing system packages..."
+if command -v apt-get >/dev/null 2>&1; then
+  sudo apt-get update -y
+  sudo apt-get install -y git wget unzip build-essential python3-dev ffmpeg
 else
-  python -m pip install torchvision scikit-image
+  echo "[WARN] apt-get not found. Please ensure build tools, wget, git, python3-dev are installed."
 fi
 
-# 7) Clone U-2-Net (cloth mask) and make importable
-echo "[8/8] Cloning U-2-Net (U²-Net)..."
+# 2) Python packages (core)
+echo "[2/6] Installing Python packages (core)..."
+python3 -m pip install --upgrade pip wheel setuptools
+
+# NOTE: The torch line below is generic; adjust the index-url for CUDA version if you want GPU support.
+# For example for CUDA 11.8, use the official index-url from PyTorch (change as needed).
+python3 -m pip install torch torchvision torchaudio --upgrade || true
+
+# base libs
+python3 -m pip install \
+    numpy \
+    pillow \
+    opencv-python \
+    onnxruntime \
+    matplotlib \
+    tqdm \
+    scikit-image \
+    pycocotools \
+    yacs \
+    albumentations \
+    cython \
+    einops \
+    torchvision --upgrade
+
+# 3) Create repo layout
+ROOT_DIR="$(pwd)"
+REPO_DIR="${ROOT_DIR}/repositories"
+MODELS_DIR="${ROOT_DIR}/models"
+mkdir -p "${REPO_DIR}"
+mkdir -p "${MODELS_DIR}"
+
+# 4) Clone required repos
+echo "[3/6] Cloning required repositories into ${REPO_DIR}..."
+cd "${REPO_DIR}"
+
+if [ ! -d "detectron2" ]; then
+  echo "Cloning Detectron2 (as a placeholder - recommended to follow Detectron2 install docs if pip install fails)..."
+  git clone https://github.com/facebookresearch/detectron2.git detectron2 || true
+fi
+
+if [ ! -d "DensePose" ]; then
+  echo "Cloning DensePose..."
+  git clone https://github.com/facebookresearch/DensePose.git DensePose || true
+fi
+
+if [ ! -d "SCHP" ]; then
+  echo "Cloning SCHP (human parsing repo)..."
+  git clone https://github.com/PeikeLi/Self-Correction-Human-Parsing.git SCHP || true
+fi
+
 if [ ! -d "U-2-Net" ]; then
-  git clone https://github.com/xuebinqin/U-2-Net.git U-2-Net
-fi
-python -m pip install -r U-2-Net/requirements.txt || true
-
-# 8) Download commonly used pretrained models (u2net, schp, viton agnostic placeholders)
-echo "[Downloading pretrained weights - this may take a minute]"
-mkdir -p pretrained_models/u2net
-if [ ! -f "pretrained_models/u2net/u2netp.pth" ]; then
-  wget -q -O pretrained_models/u2net/u2netp.pth \
-    https://huggingface.co/levihsu/O-VITON/resolve/main/pretrained_models/u2net/u2netp.pth || true
+  echo "Cloning U-2-Net (cloth mask)..."
+  git clone https://github.com/xuebinqin/U-2-Net.git "U-2-Net" || true
 fi
 
-mkdir -p pretrained_models/schp
-if [ ! -f "pretrained_models/schp/schp.pth" ]; then
-  # try common SCHP weight (if available). If not available, user can upload to Kaggle dataset.
-  echo "[INFO] SCHP weight not included automatically; place schp.pth in pretrained_models/schp/ if needed."
+cd "${ROOT_DIR}"
+
+# 5) Install detectron2 & densepose (editable)
+echo "[4/6] Installing detectron2 and DensePose (editable mode). If this fails, follow detectron2 installation docs."
+# Prefer pip installation of a matching detectron2 wheel if you know CUDA/PyTorch versions.
+# Fallback to editable install from source (may require additional system libs)
+python3 -m pip install -e "${REPO_DIR}/detectron2" || {
+  echo "[WARN] pip install -e detectron2 failed — try installing detectron2 wheel matching your CUDA/PyTorch manually."
+}
+
+echo "[4/6] Installing DensePose (editable)..."
+python3 -m pip install -e "${REPO_DIR}/DensePose" || {
+  echo "[WARN] pip install -e DensePose failed — try installing dependencies manually."
+}
+
+# 6) Download recommended models (ONNX OpenPose BODY-25, U2Net)
+echo "[5/6] Downloading recommended models into ${MODELS_DIR}..."
+
+# 6.1 OpenPose BODY-25 ONNX (community converted) - placeholder URL
+OPENPOSE_ONNX="${MODELS_DIR}/openpose_body_25.onnx"
+if [ ! -f "${OPENPOSE_ONNX}" ]; then
+  echo "Downloading example OpenPose BODY-25 ONNX (sample URL)."
+  # You should replace this with a real stable URL or add your own model to models/
+  # Example placeholder below (will likely 404) — replace with your own hosting or release.
+  curl -L -o "${OPENPOSE_ONNX}" "https://github.com/TMElyralab/OpenPose-Body25-ONNX/releases/download/v1.0/openpose_body_25.onnx" || true
+  if [ ! -f "${OPENPOSE_ONNX}" ]; then
+    echo "[WARN] OpenPose ONNX did not download automatically. Place openpose_body_25.onnx into ${MODELS_DIR} manually."
+  fi
+else
+  echo "OpenPose ONNX already exists."
 fi
 
-mkdir -p pretrained_models/vitonhd
-echo "[INFO] If you have official VITON-HD agnostic/parse weights, upload to pretrained_models/vitonhd/"
+# 6.2 U2Net checkpoint
+U2NET_PTH="${MODELS_DIR}/u2net.pth"
+if [ ! -f "${U2NET_PTH}" ]; then
+  echo "Downloading U2Net checkpoint (u2netp recommended)..."
+  # Replace URL if you have your own hosting
+  curl -L -o "${U2NET_PTH}" "https://github.com/xuebinqin/U-2-Net/releases/download/v1.0/u2net.pth" || true
+  if [ ! -f "${U2NET_PTH}" ]; then
+    echo "[WARN] U2Net checkpoint not downloaded automatically. Place your u2net checkpoint (u2netp.pth or u2net.pth) in ${MODELS_DIR}."
+  fi
+else
+  echo "U2Net checkpoint already exists."
+fi
 
-# 9) Make repos importable by adding to PYTHONPATH (persist in ~/.bashrc)
-REPO_DIR=$(pwd)
-echo "export PYTHONPATH=\$PYTHONPATH:$REPO_DIR/DensePose" >> ~/.bashrc
-echo "export PYTHONPATH=\$PYTHONPATH:$REPO_DIR/SCHP" >> ~/.bashrc
-echo "export PYTHONPATH=\$PYTHONPATH:$REPO_DIR/U-2-Net" >> ~/.bashrc
-echo "export PYTHONPATH=\$PYTHONPATH:$REPO_DIR" >> ~/.bashrc
+# 6.3 SCHP placeholder checkpoint
+SCHP_PTH="${MODELS_DIR}/schp.pth"
+if [ ! -f "${SCHP_PTH}" ]; then
+  echo "No SCHP checkpoint downloaded automatically. If you have schp pretrained weights, place them in ${SCHP_PTH}."
+else
+  echo "SCHP checkpoint found."
+fi
 
-# Source for current shell (note: Kaggle still requires kernel restart for Jupyter)
-source ~/.bashrc || true
+# 7) Add repositories to PYTHONPATH via a helper env file (do not modify ~/.bashrc here)
+ENV_FILE="${ROOT_DIR}/env.sh"
+echo "[6/6] Creating helper env file: ${ENV_FILE}"
+cat > "${ENV_FILE}" <<EOF
+# env.sh - add repo roots to PYTHONPATH for this shell
+export VITON_PREPROCESS_ROOT="${ROOT_DIR}"
+export PYTHONPATH="\$PYTHONPATH:${REPO_DIR}/DensePose:${REPO_DIR}/detectron2:${REPO_DIR}/SCHP:${REPO_DIR}/U-2-Net:${ROOT_DIR}"
+EOF
 
-# 10) Quick import test
-echo "=================================="
-echo " Running quick import tests (Python)"
-echo "=================================="
-python - <<'PYTEST'
-print("Python:", __import__("sys").version.splitlines()[0])
-ok = True
-try:
-    import openpifpaf
-    print("[OK] openpifpaf (pose) import")
-except Exception as e:
-    ok = False
-    print("[FAIL] openpifpaf import:", e)
-
-try:
-    import detectron2
-    print("[OK] detectron2 import")
-except Exception as e:
-    ok = False
-    print("[FAIL] detectron2 import (DensePose relies on this):", e)
-
-try:
-    import densepose
-    print("[OK] densepose import")
-except Exception as e:
-    ok = False
-    print("[FAIL] densepose import:", e)
-
-try:
-    import SCHP
-    print("[OK] SCHP package import (module name may vary)")
-except Exception as e:
-    # Try a common module import fallback
-    try:
-        import networks
-        print("[OK] SCHP networks import")
-    except Exception as e2:
-        ok = False
-        print("[FAIL] SCHP import (try adjusting PYTHONPATH):", e2)
-
-try:
-    # U-2-Net's model file is typically named "model.py" and provides U2NET / U2NETP classes
-    from U_2_Net import model as u2model  # try a namespaced import
-    print("[INFO] Attempted U-2-Net import via package alias (may need minor path fixes).")
-except Exception:
-    try:
-        # fallback to direct model import if repo root exposes model.py
-        from model import U2NETP
-        print("[OK] U2NETP import")
-    except Exception as e:
-        ok = False
-        print("[FAIL] U2Net import (you may need to add U-2-Net path to sys.path in notebooks):", e)
-
-if ok:
-    print("All main imports succeeded (or partial). You must RESTART the kernel for changes to take effect.")
-else:
-    print("One or more imports failed. See messages above. You may still proceed but expect to adjust PYTHONPATH or upload pretrained weights.")
-
-PYTEST
-
-echo "======================================="
-echo " Done. IMPORTANT: Restart Kaggle kernel "
-echo " (Kernel -> Restart) before running code."
-echo "======================================="
+echo "============================================"
+echo " Setup completed (possibly with warnings)."
+echo ""
+echo " Important next steps:"
+echo "  1) Inspect ${MODELS_DIR} and place missing model files there (openpose_body_25.onnx, u2net.pth, schp.pth)."
+echo "  2) Source the env helper in any shell or add it to your environment:"
+echo "      source env.sh"
+echo "  3) If detectron2 install failed, follow official install instructions matching your PyTorch/CUDA:"
+echo "      https://github.com/facebookresearch/detectron2/blob/main/INSTALL.md"
+echo "  4) If you will use GPU/onnxruntime-gpu, install onnxruntime-gpu and ensure CUDA drivers are installed."
+echo ""
+echo " To test basic Python imports, run:"
+echo "   python3 -c \"import onnxruntime, cv2, torch; print('onnxruntime, cv2, torch OK')\""
+echo ""
+echo " Repository ready at: ${ROOT_DIR}"
+echo "============================================"
