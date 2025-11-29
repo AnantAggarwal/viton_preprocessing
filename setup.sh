@@ -28,7 +28,7 @@ python -m pip install numpy pillow opencv-python scikit-image tqdm matplotlib cy
 
 # 3) Install OpenPifPaf for pose (lightweight, pip installable)
 #echo "[4/8] Installing OpenPifPaf (pose/keypoints alternative to OpenPose)..."
-#python -m pip install git+https://github.com/openpifpaf/openpifpaf.git
+pip3 install openpifpaf
 
 # 4) Install Detectron2 (DensePose depends on Detectron2)
 #    We try to install a compatible Detectron2 wheel; if that fails we fallback to building from source.
@@ -43,11 +43,8 @@ echo "Detected torch version: $PYTORCH_VERSION"
 # Try to install a prebuilt detectron2 wheel for common CUDA; fall back to git source if pip wheel unavailable.
 # Kaggle typically uses CUDA 11.x; try cu118 wheel first.
 set +e
-python -m pip install 'git+https://github.com/facebookresearch/detectron2.git' --quiet
-if [ $? -ne 0 ]; then
-  echo "[WARN] pip-install detectron2 failed — attempting build-from-source via git (may take time)"
-  python -m pip install 'git+https://github.com/facebookresearch/detectron2.git'
-fi
+git clone https://github.com/facebookresearch/detectron2.git
+python -m pip install -e detectron2
 set -e
 
 # 5) Clone DensePose and install editable
