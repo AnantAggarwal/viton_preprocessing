@@ -28,7 +28,7 @@ python -m pip install numpy pillow opencv-python scikit-image tqdm matplotlib cy
 
 # 3) Install OpenPifPaf for pose (lightweight, pip installable)
 echo "[4/8] Installing OpenPifPaf (pose/keypoints alternative to OpenPose)..."
-python -m pip install openpifpaf
+python -m pip install git+https://github.com/openpifpaf/openpifpaf.git
 
 # 4) Install Detectron2 (DensePose depends on Detectron2)
 #    We try to install a compatible Detectron2 wheel; if that fails we fallback to building from source.
